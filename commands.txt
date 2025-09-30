@@ -1,0 +1,361 @@
+# Apache Superset Production Deployment Commands
+# Complete command reference for production deployment
+
+## 1. BUILD AND LOAD CUSTOM DOCKER IMAGE
+
+# Build custom Superset image with MySQL drivers
+docker build -t superset-mysql:latest .
+
+# Load image into Minikube Docker daemon
+minikube image load superset-mysql:latest
+
+# Verify image is available in Minikube
+minikube image ls | grep superset-mysql
+
+# Alternative: List all images in Minikube
+minikube image ls
+
+## 2. KUBERNETES SETUP
+
+# Create production namespace
+kubectl create namespace production
+
+# Verify namespace exists
+kubectl get namespaces
+
+# Set default namespace context (optional)
+kubectl config set-context --current --namespace=production
+
+## 3. HELM REPOSITORY SETUP
+
+# Add Superset Helm repository
+helm repo add superset https://apache.github.io/superset
+
+# Update Helm repositories
+helm repo update
+
+# Search for Superset chart
+helm search repo superset
+
+# Get chart information
+helm show chart superset/superset
+
+## 4. DEPLOY POSTGRESQL DATABASE
+
+# Deploy PostgreSQL for metadata storage
+kubectl apply -f postgres-production.yaml
+
+# Wait for PostgreSQL to be ready
+kubectl wait --for=condition=ready pod -l app=postgresql -n production --timeout=120s
+
+# Check PostgreSQL status
+kubectl get pods -n production -l app=postgresql
+
+# Verify PostgreSQL service
+kubectl get services -n production | grep postgresql
+
+## 5. DEPLOY SUPERSET APPLICATION
+
+# Deploy Superset using production values
+helm install superset superset/superset \
+  --namespace production \
+  --values production-superset-values.yaml
+
+# Watch deployment progress
+kubectl get pods -n production -w
+
+# Check deployment status
+helm list -n production
+
+## 6. VERIFICATION COMMANDS
+
+# Check all pods in production namespace
+kubectl get pods -n production
+
+# Check all services
+kubectl get services -n production
+
+# Check persistent volumes
+kubectl get pvc -n production
+
+# Check deployment details
+kubectl get deployments -n production
+
+# Describe Superset deployment
+kubectl describe deployment superset -n production
+
+## 7. ACCESS SUPERSET
+
+# Port forward to access Superset locally
+kubectl port-forward service/superset 8081:8088 -n production
+
+# Alternative port forwarding (background)
+kubectl port-forward service/superset 8081:8088 -n production &
+
+# Kill background port forward
+pkill -f "kubectl port-forward"
+
+# Access URL: http://localhost:8081
+# Username: admin
+# Password: admin
+
+## 8. LOG MONITORING
+
+# View Superset application logs
+kubectl logs deployment/superset -n production
+
+# Follow Superset logs in real-time
+kubectl logs -f deployment/superset -n production
+
+# View last 50 lines of logs
+kubectl logs deployment/superset -n production --tail=50
+
+# View PostgreSQL logs
+kubectl logs deployment/postgresql -n production
+
+# View init job logs (database initialization)
+kubectl logs job/superset-init-db -n production
+
+# View all pod logs
+kubectl logs -f --all-containers=true -l app=superset -n production
+
+## 9. DATABASE CONNECTIVITY TESTING
+
+# Test PostgreSQL connectivity from Superset pod
+POD_NAME=$(kubectl get pods -n production -l app=superset -o jsonpath='{.items[0].metadata.name}')
+kubectl exec $POD_NAME -n production -- python -c "
+import psycopg2
+try:
+    conn = psycopg2.connect('postgresql://superset:superset@superset-postgresql:5432/superset')
+    print('✅ PostgreSQL connection successful!')
+    conn.close()
+except Exception as e:
+    print(f'❌ PostgreSQL connection failed: {e}')
+"
+
+# Test MySQL drivers availability
+kubectl exec $POD_NAME -n production -- python -c "
+try:
+    import pymysql, MySQLdb
+    print('✅ MySQL drivers available!')
+except Exception as e:
+    print(f'❌ MySQL drivers not available: {e}')
+"
+
+# Test external MySQL connectivity (replace with your MySQL details)
+kubectl exec $POD_NAME -n production -- python -c "
+import MySQLdb
+try:
+    conn = MySQLdb.connect(
+        host='192.168.1.4',
+        port=3308,
+        user='root',
+        passwd='debezium',
+        db='tracking_live'
+    )
+    print('✅ External MySQL connection successful!')
+    conn.close()
+except Exception as e:
+    print(f'❌ External MySQL connection failed: {e}')
+"
+
+## 10. SCALING AND UPDATES
+
+# Scale Superset replicas
+kubectl scale deployment superset --replicas=3 -n production
+
+# Update deployment with new configuration
+helm upgrade superset superset/superset \
+  --namespace production \
+  --values production-superset-values.yaml
+
+# Check rollout status
+kubectl rollout status deployment/superset -n production
+
+# View rollout history
+kubectl rollout history deployment/superset -n production
+
+# Rollback to previous version
+kubectl rollout undo deployment/superset -n production
+
+## 11. RESOURCE MONITORING
+
+# Check pod resource usage
+kubectl top pods -n production
+
+# Check node resource usage
+kubectl top nodes
+
+# Get pod resource requests and limits
+kubectl describe pods -n production | grep -A 5 "Requests\|Limits"
+
+# Check events in namespace
+kubectl get events -n production --sort-by='.lastTimestamp'
+
+# Watch events in real-time
+kubectl get events -n production --watch
+
+## 12. TROUBLESHOOTING COMMANDS
+
+# Describe problematic pod
+kubectl describe pod <pod-name> -n production
+
+# Get detailed pod information
+kubectl get pod <pod-name> -n production -o yaml
+
+# Execute shell in running pod
+kubectl exec -it <pod-name> -n production -- /bin/bash
+
+# Check if services are accessible
+kubectl exec deployment/superset -n production -- nslookup superset-postgresql
+
+# Test network connectivity
+kubectl exec deployment/superset -n production -- ping superset-postgresql
+
+# Check DNS resolution
+kubectl exec deployment/superset -n production -- nslookup kubernetes.default
+
+## 13. BACKUP OPERATIONS
+
+# Backup PostgreSQL database
+POD_NAME=$(kubectl get pods -n production -l app=postgresql -o jsonpath='{.items[0].metadata.name}')
+kubectl exec $POD_NAME -n production -- pg_dump -U superset superset > superset-backup-$(date +%Y%m%d).sql
+
+# Copy file from pod to local
+kubectl cp production/$POD_NAME:/path/to/file ./local-file
+
+# Copy file from local to pod
+kubectl cp ./local-file production/$POD_NAME:/path/to/file
+
+# Backup Helm release values
+helm get values superset -n production > superset-values-backup-$(date +%Y%m%d).yaml
+
+## 14. CONFIGURATION MANAGEMENT
+
+# View current Helm values
+helm get values superset -n production
+
+# View current configmap
+kubectl get configmap superset-config -n production -o yaml
+
+# View secrets
+kubectl get secrets -n production
+
+# Edit configmap (if needed)
+kubectl edit configmap superset-config -n production
+
+## 15. CLEANUP COMMANDS
+
+# Delete specific resources
+kubectl delete deployment superset -n production
+kubectl delete service superset -n production
+kubectl delete job superset-init-db -n production
+
+# Uninstall Helm release
+helm uninstall superset -n production
+
+# Delete PostgreSQL
+kubectl delete -f postgres-production.yaml
+
+# Force delete stuck pods
+kubectl delete pod <pod-name> -n production --grace-period=0 --force
+
+# Delete all resources in namespace
+kubectl delete all --all -n production
+
+# Delete entire namespace
+kubectl delete namespace production
+
+# Remove Docker image from Minikube
+minikube image rm superset-mysql:latest
+
+## 16. USEFUL KUBERNETES SHORTCUTS
+
+# Get all resources in namespace
+kubectl get all -n production
+
+# Describe all pods
+kubectl describe pods -n production
+
+# Get pod IPs
+kubectl get pods -n production -o wide
+
+# Get services with endpoints
+kubectl get services -n production -o wide
+
+# Check resource quotas
+kubectl get resourcequotas -n production
+
+# Check network policies
+kubectl get networkpolicies -n production
+
+## 17. HEALTH CHECK COMMANDS
+
+# Check if Superset is responding
+curl -f http://localhost:8081/health
+
+# Check PostgreSQL connectivity
+kubectl exec deployment/postgresql -n production -- pg_isready -U superset
+
+# Test Superset API endpoint
+curl -X GET http://localhost:8081/api/v1/security/login \
+  -H "Content-Type: application/json"
+
+## 18. PERFORMANCE MONITORING
+
+# Get pod metrics
+kubectl top pod -n production --sort-by=memory
+
+# Get container metrics
+kubectl top pod -n production --containers
+
+# Monitor pod restarts
+kubectl get pods -n production -o wide | grep -E "RESTARTS|Running"
+
+## 19. MYSQL CONNECTION EXAMPLES
+
+# Connect to external MySQL from within Superset pod
+kubectl exec -it deployment/superset -n production -- mysql \
+  -h 192.168.1.4 \
+  -P 3308 \
+  -u root \
+  -p tracking_live
+
+# Test MySQL connection with Python
+kubectl exec deployment/superset -n production -- python -c "
+import pymysql
+conn = pymysql.connect(
+    host='192.168.1.4',
+    port=3308,
+    user='root',
+    password='debezium',
+    database='tracking_live'
+)
+cursor = conn.cursor()
+cursor.execute('SELECT 1')
+result = cursor.fetchone()
+print('MySQL test result:', result)
+conn.close()
+"
+
+## 20. QUICK STATUS CHECK
+
+# One command to check everything
+kubectl get pods,services,deployments,jobs,pvc -n production
+
+# Quick health summary
+echo "=== Production Superset Status ==="
+kubectl get pods -n production | grep -E "NAME|superset|postgresql"
+echo ""
+echo "=== Services ==="
+kubectl get services -n production
+echo ""
+echo "=== Storage ==="
+kubectl get pvc -n production
+
+## NOTES:
+# - Replace <pod-name> with actual pod names from 'kubectl get pods'
+# - Replace database connection details with your actual MySQL server details
+# - All commands assume you're working in the production namespace
+# - Some commands may require additional permissions depending on your cluster setup
+# - Always test commands in development before running in production

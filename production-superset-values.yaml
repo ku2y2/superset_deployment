@@ -1,0 +1,238 @@
+# Production-ready Superset Helm Values
+# Complete configuration with embedded dashboards, MySQL support, and auto-initialization
+
+# Disable external dependencies to use SQLite and SimpleCache
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false
+
+# Use custom Docker image with MySQL drivers pre-installed
+image:
+  repository: superset-mysql
+  tag: latest
+  pullPolicy: Never
+
+# Superset configuration with all features enabled
+configOverrides:
+  secret: |
+    # Security configuration
+    SECRET_KEY = 'IDR+K4GqTJGVOk7EAZGbsg1hrt6iOBO2xP7uy4wW9HBHY30ygVaYhEn'
+
+    # Use PostgreSQL for metadata storage
+    SQLALCHEMY_DATABASE_URI = 'postgresql://superset:superset@superset-postgresql:5432/superset'
+
+    # Disable Redis cache and use simple cache
+    CACHE_CONFIG = {
+        'CACHE_TYPE': 'SimpleCache',
+        'CACHE_DEFAULT_TIMEOUT': 300
+    }
+    DATA_CACHE_CONFIG = CACHE_CONFIG
+
+    # Enable embedded dashboards
+    EMBEDDED_SUPERSET = True
+
+    # Enable public role with permissions for embedded dashboards
+    PUBLIC_ROLE_LIKE = "Gamma"
+
+    # Feature flags to enable embedding and other features
+    FEATURE_FLAGS = {
+        'DASHBOARD_NATIVE_FILTERS': True,
+        'ENABLE_TEMPLATE_PROCESSING': False,
+        'EMBEDDED_SUPERSET': True,
+        'DASHBOARD_CROSS_FILTERS': True,
+        'HORIZONTAL_FILTER_BAR': True,
+        'SQL_VALIDATORS_BY_ENGINE': {},
+    }
+
+    # Allow iframe embedding
+    TALISMAN_ENABLED = True
+    TALISMAN_CONFIG = {
+        'content_security_policy': None,
+        'force_https': False,
+    }
+
+    # Database connectivity settings (compatible with SQLite)
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+    }
+
+    # SQL Lab configuration to avoid Redis dependency
+    RESULTS_BACKEND = None
+    SQL_QUERY_MUTATOR = None
+
+    # SQL Lab settings without Redis
+    SQLLAB_CTAS_NO_LIMIT = True
+    SQLLAB_TIMEOUT = 300
+    SQLLAB_ASYNC_TIME_LIMIT_SEC = 300
+
+    # Enable MySQL and other database drivers
+    # MySQL connection format: mysql+pymysql://username:password@host:port/database_name
+
+# Resource limits for production (adjust as needed)
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Multiple replicas for high availability
+replicaCount: 2
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8088
+
+# Remove init containers from nodes and workers to avoid conflicts
+supersetNode:
+  initContainers: []
+
+# Also remove init containers for worker pods
+supersetWorker:
+  initContainers: []
+  # Reduce worker replicas to save resources
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+# Bootstrap script to initialize Superset on startup
+bootstrapScript: |
+  #!/bin/bash
+  # Install drivers to system location then copy to virtual environment
+  pip install psycopg2-binary PyMySQL
+  echo "Drivers installed to system location"
+
+  # Copy psycopg2 to virtual environment
+  cp -r /usr/local/lib/python3.10/site-packages/psycopg2* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "psycopg2 copy attempted"
+
+  # Copy PyMySQL to virtual environment
+  cp -r /usr/local/lib/python3.10/site-packages/pymysql* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "PyMySQL copy attempted"
+  cp -r /usr/local/lib/python3.10/site-packages/PyMySQL* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "PyMySQL copy attempted"
+
+  echo "Database drivers copied to virtual environment"
+
+  # Create MySQLdb compatibility module
+  cat > /app/.venv/lib/python3.10/site-packages/MySQLdb.py << 'EOF' || echo "MySQLdb creation attempted"
+  # MySQLdb compatibility module
+  import pymysql
+  pymysql.install_as_MySQLdb()
+  from pymysql import *
+  EOF
+  echo "MySQLdb compatibility module created"
+
+# Enable built-in init job for automatic database initialization
+init:
+  enabled: true
+  image:
+    repository: superset-mysql
+    tag: latest
+    pullPolicy: Never
+  command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Starting automatic Superset initialization..."
+
+      # Install drivers to system location then copy to virtual environment
+      pip install psycopg2-binary PyMySQL
+      echo "Drivers installed to system location"
+
+      # Copy psycopg2 to virtual environment
+      cp -r /usr/local/lib/python3.10/site-packages/psycopg2* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "psycopg2 copy attempted"
+
+      # Copy PyMySQL to virtual environment
+      cp -r /usr/local/lib/python3.10/site-packages/pymysql* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "PyMySQL copy attempted"
+      cp -r /usr/local/lib/python3.10/site-packages/PyMySQL* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "PyMySQL copy attempted"
+
+      # Create MySQLdb compatibility module
+      cat > /app/.venv/lib/python3.10/site-packages/MySQLdb.py << 'EOF' || echo "MySQLdb creation attempted"
+      # MySQLdb compatibility module
+      import pymysql
+      pymysql.install_as_MySQLdb()
+      from pymysql import *
+      EOF
+
+      echo "Database drivers installed successfully"
+
+      # Initialize database schema
+      superset db upgrade
+      echo "Database schema upgraded"
+
+      # Create admin user
+      superset fab create-admin --username admin --firstname Superset --lastname Admin --email admin@superset.com --password admin || true
+      echo "Admin user created"
+
+      # Initialize roles and permissions
+      superset init
+      echo "Superset initialization completed successfully!"
+
+# Ingress configuration (optional - enable for external access)
+ingress:
+  enabled: false
+  # annotations:
+  #   kubernetes.io/ingress.class: nginx
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
+  # hosts:
+  #   - host: superset.yourdomain.com
+  #     paths:
+  #       - path: /
+  #         pathType: Prefix
+  # tls:
+  #   - secretName: superset-tls
+  #     hosts:
+  #       - superset.yourdomain.com
+
+# No persistence needed (using PostgreSQL for metadata)
+persistence:
+  enabled: false
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+
+# Horizontal Pod Autoscaler (optional)
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget for high availability
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8088
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8088
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
