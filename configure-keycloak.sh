@@ -12,7 +12,7 @@ CLIENT_ID="superset"
 
 # Parse command line arguments
 UPDATE_MODE=false
-REDIRECT_PORT="8081"
+REDIRECT_PORT="8082"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -28,14 +28,14 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --update         Only update redirect URIs (don't recreate client)"
-      echo "  --port PORT      Set redirect URI port (default: 8081)"
+      echo "  --update         Add redirect URIs without removing existing ones"
+      echo "  --port PORT      Set redirect URI port (default: 8082)"
       echo "  --help           Show this help message"
       echo ""
       echo "Examples:"
-      echo "  $0                      # Full setup with default port 8081"
-      echo "  $0 --port 8082          # Full setup with port 8082"
-      echo "  $0 --update --port 8082 # Only update redirect URIs to port 8082"
+      echo "  $0                      # Full setup with default port 8082"
+      echo "  $0 --port 8081          # Full setup with port 8081"
+      echo "  $0 --update --port 8082 # Add redirect URIs for port 8082 (preserves existing)"
       exit 0
       ;;
     *)
@@ -88,37 +88,80 @@ CLIENT_UUID=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
   -H "Content-Type: application/json" | jq -r ".[] | select(.clientId==\"${CLIENT_ID}\") | .id")
 
 if [ "$UPDATE_MODE" = true ]; then
-  # UPDATE MODE: Only update redirect URIs
-  echo "[2/2] Updating redirect URIs..."
+  # UPDATE MODE: Add redirect URIs without removing existing ones
+  echo "[2/2] Adding redirect URIs to existing configuration..."
 
   if [ -z "$CLIENT_UUID" ] || [ "$CLIENT_UUID" == "null" ]; then
     echo "❌ Client '${CLIENT_ID}' not found. Run without --update to create it first."
     exit 1
   fi
 
-  # Update client with new redirect URIs
+  # Get existing client configuration
+  EXISTING_CONFIG=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+    -H "Content-Type: application/json")
+
+  # Extract existing redirect URIs and web origins
+  EXISTING_REDIRECTS=$(echo "$EXISTING_CONFIG" | jq -r '.redirectUris[]' 2>/dev/null)
+  EXISTING_ORIGINS=$(echo "$EXISTING_CONFIG" | jq -r '.webOrigins[]' 2>/dev/null)
+
+  # Build new redirect URIs array (existing + new)
+  NEW_REDIRECTS='[
+    "http://localhost:'"${REDIRECT_PORT}"'/*",
+    "http://localhost:'"${REDIRECT_PORT}"'/oauth-authorized/keycloak",
+    "http://localhost:'"${REDIRECT_PORT}"'/oauth-authorized/keycloak/*"'
+
+  # Add existing redirects if they don't match the new ones
+  while IFS= read -r uri; do
+    if [ ! -z "$uri" ] && [ "$uri" != "null" ]; then
+      # Skip if it's already in our new list
+      if [[ ! "$uri" =~ "http://localhost:${REDIRECT_PORT}" ]]; then
+        NEW_REDIRECTS="$NEW_REDIRECTS,"'
+    "'"$uri"'"'
+      fi
+    fi
+  done <<< "$EXISTING_REDIRECTS"
+
+  NEW_REDIRECTS="$NEW_REDIRECTS"'
+  ]'
+
+  # Build new web origins array (existing + new)
+  NEW_ORIGINS='[
+    "http://localhost:'"${REDIRECT_PORT}"'",
+    "*"'
+
+  # Add existing origins if they don't match the new ones
+  while IFS= read -r origin; do
+    if [ ! -z "$origin" ] && [ "$origin" != "null" ] && [ "$origin" != "*" ]; then
+      # Skip if it's already in our new list
+      if [[ ! "$origin" =~ "http://localhost:${REDIRECT_PORT}" ]]; then
+        NEW_ORIGINS="$NEW_ORIGINS,"'
+    "'"$origin"'"'
+      fi
+    fi
+  done <<< "$EXISTING_ORIGINS"
+
+  NEW_ORIGINS="$NEW_ORIGINS"'
+  ]'
+
+  # Update client with merged configuration
   curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
     -d '{
       "clientId": "'"${CLIENT_ID}"'",
-      "redirectUris": [
-        "http://localhost:'"${REDIRECT_PORT}"'/*",
-        "http://localhost:'"${REDIRECT_PORT}"'/oauth-authorized/keycloak",
-        "http://localhost:'"${REDIRECT_PORT}"'/oauth-authorized/keycloak/*"
-      ],
-      "webOrigins": [
-        "http://localhost:'"${REDIRECT_PORT}"'",
-        "*"
-      ]
+      "redirectUris": '"${NEW_REDIRECTS}"',
+      "webOrigins": '"${NEW_ORIGINS}"'
     }'
 
-  echo "✅ Redirect URIs updated successfully!"
+  echo "✅ Redirect URIs added successfully (existing ones preserved)!"
   echo ""
-  echo "Updated redirect URIs:"
+  echo "Added redirect URIs:"
   echo "  - http://localhost:${REDIRECT_PORT}/*"
   echo "  - http://localhost:${REDIRECT_PORT}/oauth-authorized/keycloak"
   echo "  - http://localhost:${REDIRECT_PORT}/oauth-authorized/keycloak/*"
+  echo ""
+  echo "ℹ️  Existing URIs were preserved. View all URIs in Keycloak Admin Console."
   echo ""
   exit 0
 fi

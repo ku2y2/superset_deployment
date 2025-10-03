@@ -9,7 +9,7 @@ This configuration enables:
 - Automatic user registration from Keycloak
 - Single Sign-On experience
 - Keycloak running locally on port 8090
-- Superset accessible on port 8081
+- Superset accessible on port 8082
 
 ## Prerequisites
 
@@ -47,13 +47,10 @@ docker logs -f keycloak
 Use the provided script to automatically configure Keycloak:
 
 ```bash
-# Run the configuration script
-./configure-keycloak.sh
+# Run the configuration script with port 8082
+./configure-keycloak.sh --port 8082
 
-# Or with custom port
-./configure-keycloak.sh --port 8081
-
-# To only update redirect URIs later
+# Or to add redirect URIs without removing existing ones
 ./configure-keycloak.sh --update --port 8082
 ```
 
@@ -83,11 +80,11 @@ This script will:
 5. Configure Login Settings:
    - **Valid redirect URIs**:
      ```
-     http://localhost:8081/*
-     http://localhost:8081/oauth-authorized/keycloak
+     http://localhost:8082/*
+     http://localhost:8082/oauth-authorized/keycloak
      ```
-   - **Valid post logout redirect URIs**: `http://localhost:8081/*`
-   - **Web origins**: `http://localhost:8081`
+   - **Valid post logout redirect URIs**: `http://localhost:8082/*`
+   - **Web origins**: `http://localhost:8082`
    - Click **Save**
 
 ### Get Client Secret
@@ -160,7 +157,7 @@ If you used the automated script (`configure-keycloak.sh`), a test user is alrea
 
 ### Access Superset
 
-1. Open browser: http://localhost:8081
+1. Open browser: http://localhost:8082
 2. You should see a **Login with Keycloak** button
 3. Click the button
 4. You'll be redirected to Keycloak login page
@@ -213,8 +210,8 @@ The OAuth provider requests these scopes:
 
 **Solution**: Verify redirect URIs in Keycloak client settings match exactly:
 ```
-http://localhost:8081/*
-http://localhost:8081/oauth-authorized/keycloak
+http://localhost:8082/*
+http://localhost:8082/oauth-authorized/keycloak
 ```
 
 ### Issue: "Cannot connect to Keycloak"
