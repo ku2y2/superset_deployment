@@ -54,12 +54,40 @@ configOverrides:
         'SQL_VALIDATORS_BY_ENGINE': {},
     }
 
-    # Allow iframe embedding
-    TALISMAN_ENABLED = True
+    # Allow iframe embedding - Disable Talisman for embedded dashboards
+    TALISMAN_ENABLED = False
     TALISMAN_CONFIG = {
         'content_security_policy': None,
         'force_https': False,
     }
+
+    # CORS configuration for embedded dashboards
+    ENABLE_CORS = True
+    CORS_OPTIONS = {
+        'supports_credentials': True,
+        'allow_headers': ['*'],
+        'resources': ['*'],
+        'origins': ['http://localhost:5173', 'http://localhost:3000']
+    }
+
+    # HTTP headers configuration
+    HTTP_HEADERS = {
+        'X-Frame-Options': 'ALLOWALL'
+    }
+
+    # Additional security settings for embedding
+    WTF_CSRF_ENABLED = True
+    WTF_CSRF_EXEMPT_LIST = [
+        'superset.views.core.log',
+        'superset.charts.api.data',
+        'superset.security.api.SecurityRestApi.guest_token'
+    ]
+    WTF_CSRF_TIME_LIMIT = None
+
+    # Session cookie settings for cross-origin requests and OAuth
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SECURE = False
+    SESSION_COOKIE_SAMESITE = 'Lax'  # Changed from None to Lax for OAuth compatibility
 
     # Database connectivity settings (compatible with SQLite)
     SQLALCHEMY_ENGINE_OPTIONS = {
@@ -151,9 +179,9 @@ supersetWorker:
 # Bootstrap script to initialize Superset on startup
 bootstrapScript: |
   #!/bin/bash
-  # Install drivers to system location then copy to virtual environment
-  pip install psycopg2-binary PyMySQL authlib
-  echo "Drivers and OAuth libraries installed to system location"
+  # Install drivers and required libraries to system location then copy to virtual environment
+  pip install psycopg2-binary PyMySQL authlib flask-cors
+  echo "Drivers and required libraries installed to system location"
 
   # Copy psycopg2 to virtual environment
   cp -r /usr/local/lib/python3.10/site-packages/psycopg2* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "psycopg2 copy attempted"
@@ -165,7 +193,10 @@ bootstrapScript: |
   # Copy authlib for OAuth support
   cp -r /usr/local/lib/python3.10/site-packages/authlib* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "authlib copy attempted"
 
-  echo "Database drivers and OAuth libraries copied to virtual environment"
+  # Copy flask-cors for CORS support
+  cp -r /usr/local/lib/python3.10/site-packages/flask_cors* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "flask-cors copy attempted"
+
+  echo "Database drivers and required libraries copied to virtual environment"
 
   # Create MySQLdb compatibility module
   cat > /app/.venv/lib/python3.10/site-packages/MySQLdb.py << 'EOF' || echo "MySQLdb creation attempted"
@@ -189,9 +220,9 @@ init:
     - |
       echo "Starting automatic Superset initialization..."
 
-      # Install drivers to system location then copy to virtual environment
-      pip install psycopg2-binary PyMySQL authlib
-      echo "Drivers and OAuth libraries installed to system location"
+      # Install drivers and required libraries to system location then copy to virtual environment
+      pip install psycopg2-binary PyMySQL authlib flask-cors
+      echo "Drivers and required libraries installed to system location"
 
       # Copy psycopg2 to virtual environment
       cp -r /usr/local/lib/python3.10/site-packages/psycopg2* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "psycopg2 copy attempted"
@@ -203,6 +234,9 @@ init:
       # Copy authlib for OAuth support
       cp -r /usr/local/lib/python3.10/site-packages/authlib* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "authlib copy attempted"
 
+      # Copy flask-cors for CORS support
+      cp -r /usr/local/lib/python3.10/site-packages/flask_cors* /app/.venv/lib/python3.10/site-packages/ 2>/dev/null || echo "flask-cors copy attempted"
+
       # Create MySQLdb compatibility module
       cat > /app/.venv/lib/python3.10/site-packages/MySQLdb.py << 'EOF' || echo "MySQLdb creation attempted"
       # MySQLdb compatibility module
@@ -211,7 +245,7 @@ init:
       from pymysql import *
       EOF
 
-      echo "Database drivers and OAuth libraries installed successfully"
+      echo "Database drivers and required libraries installed successfully"
 
       # Initialize database schema
       superset db upgrade
